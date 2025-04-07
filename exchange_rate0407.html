@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>人民币兑美元汇率仪表盘</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+            text-align: center;
+        }
+        .dashboard {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .rates {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 20px;
+        }
+        .rate-box {
+            background: #e0f7fa;
+            padding: 15px;
+            border-radius: 5px;
+            width: 30%;
+        }
+        .chart-container {
+            width: 100%;
+            height: 400px;
+            margin: 20px 0;
+        }
+        .analysis {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #555;
+        }
+        .statistics {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #e9ecef;
+        }
+        .statistics h3 {
+            margin-top: 0;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .statistics p {
+            margin: 5px 0;
+            line-height: 1.5;
+        }
+        a {
+            color: #007bff;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+        .error-message {
+            color: red;
+            margin: 10px 0;
+            display: none;
+        }
+        .update-time {
+            color: #666;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <h1>人民币兑美元汇率仪表盘</h1>
+        <div class="error-message" id="errorMessage">获取数据时发生错误，请稍后重试</div>
+        <div class="rates">
+            <div class="rate-box">
+                <h3>买入价</h3>
+                <p id="buyPrice">加载中...</p>
+            </div>
+            <div class="rate-box">
+                <h3>卖出价</h3>
+                <p id="sellPrice">加载中...</p>
+            </div>
+            <div class="rate-box">
+                <h3>中间价</h3>
+                <p id="midPrice">加载中...</p>
+                <p class="update-time" id="updateTime"></p>
+            </div>
+        </div>
+        <div class="chart-container">
+            <canvas id="exchangeChart"></canvas>
+        </div>
+        <div class="statistics" id="statsContainer" style="display: none;">
+            <h3>历史数据统计</h3>
+            <p id="statsInfo">加载中...</p>
+        </div>
+        <div class="analysis">
+            <p>数据来源: Frankfurter API（欧洲中央银行官方汇率）</p>
+            <p>注意：历史数据仅包含工作日（不含周末和节假日）</p>
+            <p id="todayAnalysis">今日人民币兑美元汇率分析: 加载中...</p>
+        </div>
+    </div>
+
+    <script>
+        let chart = null;
+
+        // 获取实时汇率数据
+        async function fetchRates() {
+            try {
+                const response = await fetch('http://localhost:5000/api/real-time-rates');
+                const data = await response.json();
+                
+                if (data.success) {
+                    document.getElementById('buyPrice').textContent = data.buyPrice.toFixed(4);
+                    document.getElementById('sellPrice').textContent = data.sellPrice.toFixed(4);
+                    document.getElementById('midPrice').textContent = data.midPrice.toFixed(4);
+                    
+                    // 显示更新时间
+                    if (data.updateTime) {
+                        document.getElementById('updateTime').textContent = `更新时间：${data.updateTime}`;
+                    }
+
+                    // 更新分析
+                    const spread = data.sellPrice - data.buyPrice;
+                    document.getElementById('todayAnalysis').textContent = 
+                        `今日人民币兑美元汇率分析: 中间价为 ${data.midPrice.toFixed(4)}，买卖价差为 ${spread.toFixed(4)}，显示市场波动较平稳。`;
+                    
+                    document.getElementById('errorMessage').style.display = 'none';
+                } else {
+                    throw new Error(data.error || '获取数据失败');
+                }
+            } catch (error) {
+                console.error('获取实时汇率数据失败:', error);
+                document.getElementById('errorMessage').style.display = 'block';
+            }
+        }
+
+        // 获取历史汇率数据并更新图表
+        async function fetchChartData() {
+            try {
+                const response = await fetch('http://localhost:5000/api/historical-rates');
+                const data = await response.json();
+                
+                if (data.success) {
+                    // 如果已存在图表，销毁它
+                    if (chart) {
+                        chart.destroy();
+                    }
+
+                    // 显示统计信息
+                    if (data.data.statistics) {
+                        const stats = data.data.statistics;
+                        document.getElementById('statsContainer').style.display = 'block';
+                        document.getElementById('statsInfo').innerHTML = 
+                            `最高汇率: <strong>${stats.最高汇率}</strong> | ` +
+                            `最低汇率: <strong>${stats.最低汇率}</strong> | ` +
+                            `平均汇率: <strong>${stats.平均汇率}</strong><br>` +
+                            `数据点数量: <strong>${stats.数据点数量}</strong> (工作日)`;
+                    }
+
+                    const ctx = document.getElementById('exchangeChart').getContext('2d');
+                    chart = new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: data.data.labels,
+                            datasets: [{
+                                label: '人民币兑美元中间价',
+                                data: data.data.rates,
+                                borderColor: '#007bff',
+                                fill: false,
+                                tension: 0.1
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                y: {
+                                    beginAtZero: false,
+                                    title: {
+                                        display: true,
+                                        text: '汇率'
+                                    }
+                                },
+                                x: {
+                                    title: {
+                                        display: true,
+                                        text: '日期'
+                                    }
+                                }
+                            },
+                            plugins: {
+                                title: {
+                                    display: true,
+                                    text: '过去一年人民币兑美元汇率走势',
+                                    font: {
+                                        size: 16
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    
+                    document.getElementById('errorMessage').style.display = 'none';
+                } else {
+                    throw new Error(data.error || '获取数据失败');
+                }
+            } catch (error) {
+                console.error('获取历史汇率数据失败:', error);
+                document.getElementById('errorMessage').style.display = 'block';
+            }
+        }
+
+        // 初始化数据
+        fetchRates();
+        fetchChartData();
+
+        // 每5分钟刷新实时汇率
+        setInterval(fetchRates, 300000);
+        // 每小时刷新历史数据
+        setInterval(fetchChartData, 3600000);
+    </script>
+</body>
+</html> 
